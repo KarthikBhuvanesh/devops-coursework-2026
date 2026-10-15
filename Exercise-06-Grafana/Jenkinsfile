@@ -64,26 +64,35 @@ pipeline {
         }
 
         
+        
         stage('Container Smoke Test') {
             steps {
                 dir('Exercise-06-Grafana') {
                     sh '''
                         set -eu
 
-                        TEST_NETWORK="delivery-metrics-ci-net"
+                        TEST_NETWORK="monitoring-net"
+
                         cleanup() {
                             docker rm -f "$TEST_CONTAINER" >/dev/null 2>&1 || true
-                            docker network rm "$TEST_NETWORK" >/dev/null 2>&1 || true
                         }
                         trap cleanup EXIT
 
+                        # Remove any leftover test container.
                         cleanup
-                        docker network create "$TEST_NETWORK"
 
-                        docker run -d --name "$TEST_CONTAINER" \
-                            --network "$TEST_NETWORK" "$APP_IMAGE"
+                        # Confirm that the shared network exists.
+                        docker network inspect "$TEST_NETWORK" >/dev/null
+
+                        # Start the application on the shared network.
+                        docker run -d \
+                            --name "$TEST_CONTAINER" \
+                            --network "$TEST_NETWORK" \
+                            "$APP_IMAGE"
 
                         ready=0
+
+                        # Wait for the metrics endpoint to become available.
                         for attempt in $(seq 1 20); do
                             if python3 -c "import urllib.request; urllib.request.urlopen('http://$TEST_CONTAINER:8000/metrics', timeout=2).read()" 2>/dev/null; then
                                 ready=1
@@ -92,23 +101,31 @@ pipeline {
                             sleep 2
                         done
 
-                        test "$ready" -eq 1
+                        if [ "$ready" -ne 1 ]; then
+                            echo "FAIL: Metrics endpoint did not become ready."
+                            docker logs "$TEST_CONTAINER" || true
+                            exit 1
+                        fi
 
+                        # Verify the HTTP response and expected metrics.
                         python3 - <<'PY'
 import urllib.request
 
 url = "http://delivery-metrics-ci-test:8000/metrics"
+
 with urllib.request.urlopen(url, timeout=5) as response:
-    assert response.status == 200
+    assert response.status == 200, f"Unexpected HTTP status: {response.status}"
     body = response.read().decode()
 
-for metric in (
+expected_metrics = (
     "total_deliveries ",
     "pending_deliveries ",
     "on_the_way_deliveries ",
     "average_delivery_time_count ",
     "average_delivery_time_sum ",
-):
+)
+
+for metric in expected_metrics:
     assert metric in body, f"Missing metric: {metric}"
 
 print("PASS: Container metrics endpoint and all expected metrics.")
@@ -117,6 +134,7 @@ PY
                 }
             }
         }
+
 
 
         stage('Pipeline Complete') {
