@@ -1,0 +1,128 @@
+﻿pipeline {
+    agent {
+        label 'exercise6-agent'
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        APP_IMAGE = 'delivery-metrics:ci'
+        TEST_CONTAINER = 'delivery-metrics-ci-test'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                echo 'Repository checkout completed.'
+            }
+        }
+
+        stage('Validate Python') {
+            steps {
+                dir('Exercise-06-Grafana') {
+                    sh '''
+                        set -eu
+                        python3 --version
+                        python3 -m py_compile delivery_metrics.py test_metrics.py
+                        echo "PASS: Python syntax validation."
+                    '''
+                }
+            }
+        }
+
+        stage('Validate Monitoring Configuration') {
+            steps {
+                dir('Exercise-06-Grafana') {
+                    sh '''
+                        set -eu
+                        grep -q 'delivery-metrics:8000' prometheus.yml
+                        grep -q 'HighPendingDeliveries' alert_rules.yml
+                        grep -q 'HighAverageDeliveryTime' alert_rules.yml
+                        grep -q 'total_deliveries' delivery_metrics.py
+                        grep -q 'pending_deliveries' delivery_metrics.py
+                        grep -q 'on_the_way_deliveries' delivery_metrics.py
+                        echo "PASS: Monitoring configuration and expected metrics."
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                dir('Exercise-06-Grafana') {
+                    sh '''
+                        set -eu
+                        docker build -t "$APP_IMAGE" .
+                        echo "PASS: Application image built."
+                    '''
+                }
+            }
+        }
+
+        stage('Container Smoke Test') {
+            steps {
+                dir('Exercise-06-Grafana') {
+                    sh '''
+                        set -eu
+                        cleanup() {
+                            docker rm -f "$TEST_CONTAINER" >/dev/null 2>&1 || true
+                        }
+                        trap cleanup EXIT
+
+                        cleanup
+                        docker run -d --name "$TEST_CONTAINER" \
+                            -p 127.0.0.1:18000:8000 "$APP_IMAGE"
+
+                        ready=0
+                        for attempt in $(seq 1 20); do
+                            if python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18000/metrics', timeout=2).read()" 2>/dev/null; then
+                                ready=1
+                                break
+                            fi
+                            sleep 2
+                        done
+
+                        test "$ready" -eq 1
+
+                        python3 - <<'PY'
+import urllib.request
+
+url = "http://127.0.0.1:18000/metrics"
+with urllib.request.urlopen(url, timeout=5) as response:
+    assert response.status == 200
+    body = response.read().decode()
+
+for metric in (
+    "total_deliveries ",
+    "pending_deliveries ",
+    "on_the_way_deliveries ",
+    "average_delivery_time_count ",
+    "average_delivery_time_sum ",
+):
+    assert metric in body, f"Missing metric: {metric}"
+
+print("PASS: Container metrics endpoint and all expected metrics.")
+PY
+                    '''
+                }
+            }
+        }
+
+        stage('Pipeline Complete') {
+            steps {
+                echo 'All source, configuration, image-build, and container smoke tests passed.'
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Exercise 6 CI pipeline finished. Review stage results above.'
+        }
+    }
+}
+
