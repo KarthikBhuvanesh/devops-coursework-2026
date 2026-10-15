@@ -63,23 +63,29 @@ pipeline {
             }
         }
 
+        
         stage('Container Smoke Test') {
             steps {
                 dir('Exercise-06-Grafana') {
                     sh '''
                         set -eu
+
+                        TEST_NETWORK="delivery-metrics-ci-net"
                         cleanup() {
                             docker rm -f "$TEST_CONTAINER" >/dev/null 2>&1 || true
+                            docker network rm "$TEST_NETWORK" >/dev/null 2>&1 || true
                         }
                         trap cleanup EXIT
 
                         cleanup
+                        docker network create "$TEST_NETWORK"
+
                         docker run -d --name "$TEST_CONTAINER" \
-                            -p 127.0.0.1:18000:8000 "$APP_IMAGE"
+                            --network "$TEST_NETWORK" "$APP_IMAGE"
 
                         ready=0
                         for attempt in $(seq 1 20); do
-                            if python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18000/metrics', timeout=2).read()" 2>/dev/null; then
+                            if python3 -c "import urllib.request; urllib.request.urlopen('http://$TEST_CONTAINER:8000/metrics', timeout=2).read()" 2>/dev/null; then
                                 ready=1
                                 break
                             fi
@@ -91,7 +97,7 @@ pipeline {
                         python3 - <<'PY'
 import urllib.request
 
-url = "http://127.0.0.1:18000/metrics"
+url = "http://delivery-metrics-ci-test:8000/metrics"
 with urllib.request.urlopen(url, timeout=5) as response:
     assert response.status == 200
     body = response.read().decode()
@@ -111,6 +117,7 @@ PY
                 }
             }
         }
+
 
         stage('Pipeline Complete') {
             steps {
