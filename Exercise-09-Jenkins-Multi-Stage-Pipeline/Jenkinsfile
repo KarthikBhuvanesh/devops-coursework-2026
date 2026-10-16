@@ -9,35 +9,46 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    environment {
+        APP_DIR = 'Exercise-09-Jenkins-Multi-Stage-Pipeline'
+        DEPLOY_DIR = "${WORKSPACE}/Exercise-09-Jenkins-Multi-Stage-Pipeline/python-app-deploy"
+    }
+
     stages {
         stage('Build') {
             steps {
-                echo 'Creating virtual environment and installing dependencies...'
-                sh '''
-                    python3 -m venv .venv
-                    .venv/bin/python -m pip install --upgrade pip
-                    .venv/bin/python -m pip install -r requirements.txt
-                '''
+                dir("${APP_DIR}") {
+                    echo 'Creating virtual environment and installing dependencies...'
+                    sh '''
+                        python3 -m venv .venv
+                        .venv/bin/python -m pip install --upgrade pip
+                        .venv/bin/python -m pip install -r requirements.txt
+                    '''
+                }
             }
         }
 
         stage('Test') {
             steps {
-                echo 'Running unit tests...'
-                sh '''
-                    .venv/bin/python -m unittest discover -s .
-                '''
+                dir("${APP_DIR}") {
+                    echo 'Running unit tests...'
+                    sh '''
+                        .venv/bin/python -m unittest discover -s .
+                    '''
+                }
             }
         }
 
         stage('Deploy') {
             steps {
-                echo 'Deploying application to mock deployment directory...'
-                sh '''
-                    mkdir -p "$WORKSPACE/python-app-deploy"
-                    cp app.py "$WORKSPACE/python-app-deploy/"
-                    cp requirements.txt "$WORKSPACE/python-app-deploy/"
-                '''
+                dir("${APP_DIR}") {
+                    echo 'Deploying application to mock deployment directory...'
+                    sh '''
+                        mkdir -p "$DEPLOY_DIR"
+                        cp app.py "$DEPLOY_DIR/"
+                        cp requirements.txt "$DEPLOY_DIR/"
+                    '''
+                }
             }
         }
 
@@ -45,18 +56,21 @@ pipeline {
             steps {
                 echo 'Starting the deployed Flask application...'
                 sh '''
-                    if [ -f "$WORKSPACE/python-app-deploy/app.pid" ]; then
-                        old_pid=$(cat "$WORKSPACE/python-app-deploy/app.pid")
+                    mkdir -p "$DEPLOY_DIR"
+
+                    if [ -f "$DEPLOY_DIR/app.pid" ]; then
+                        old_pid=$(cat "$DEPLOY_DIR/app.pid")
                         kill "$old_pid" 2>/dev/null || true
+                        rm -f "$DEPLOY_DIR/app.pid"
                     fi
 
-                    nohup "$WORKSPACE/.venv/bin/python" \
-                        "$WORKSPACE/python-app-deploy/app.py" \
-                        > "$WORKSPACE/python-app-deploy/app.log" 2>&1 &
-                    echo $! > "$WORKSPACE/python-app-deploy/app.pid"
+                    nohup "$WORKSPACE/$APP_DIR/.venv/bin/python" \
+                        "$DEPLOY_DIR/app.py" \
+                        > "$DEPLOY_DIR/app.log" 2>&1 &
+                    echo $! > "$DEPLOY_DIR/app.pid"
 
                     for i in $(seq 1 20); do
-                        if "$WORKSPACE/.venv/bin/python" -c \
+                        if "$WORKSPACE/$APP_DIR/.venv/bin/python" -c \
                             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/', timeout=2)" \
                             2>/dev/null; then
                             echo "Application is responding."
@@ -65,7 +79,7 @@ pipeline {
                         sleep 1
                     done
 
-                    cat "$WORKSPACE/python-app-deploy/app.log"
+                    cat "$DEPLOY_DIR/app.log"
                     echo "Application did not become ready."
                     exit 1
                 '''
@@ -76,7 +90,7 @@ pipeline {
             steps {
                 echo 'Testing the deployed application over HTTP...'
                 sh '''
-                    "$WORKSPACE/.venv/bin/python" -c "
+                    "$WORKSPACE/$APP_DIR/.venv/bin/python" -c "
 import urllib.request
 url = 'http://127.0.0.1:5000/'
 with urllib.request.urlopen(url, timeout=5) as response:
@@ -100,10 +114,10 @@ print('Deployed application test passed.')
         }
         always {
             sh '''
-                if [ -f "$WORKSPACE/python-app-deploy/app.pid" ]; then
-                    pid=$(cat "$WORKSPACE/python-app-deploy/app.pid")
+                if [ -f "$DEPLOY_DIR/app.pid" ]; then
+                    pid=$(cat "$DEPLOY_DIR/app.pid")
                     kill "$pid" 2>/dev/null || true
-                    rm -f "$WORKSPACE/python-app-deploy/app.pid"
+                    rm -f "$DEPLOY_DIR/app.pid"
                 fi
             '''
         }
