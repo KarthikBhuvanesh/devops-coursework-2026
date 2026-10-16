@@ -1,0 +1,111 @@
+
+pipeline {
+    agent {
+        label 'exercise6-agent'
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    stages {
+        stage('Build') {
+            steps {
+                echo 'Creating virtual environment and installing dependencies...'
+                sh '''
+                    python3 -m venv .venv
+                    .venv/bin/python -m pip install --upgrade pip
+                    .venv/bin/python -m pip install -r requirements.txt
+                '''
+            }
+        }
+
+        stage('Test') {
+            steps {
+                echo 'Running unit tests...'
+                sh '''
+                    .venv/bin/python -m unittest discover -s .
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying application to mock deployment directory...'
+                sh '''
+                    mkdir -p "$WORKSPACE/python-app-deploy"
+                    cp app.py "$WORKSPACE/python-app-deploy/"
+                    cp requirements.txt "$WORKSPACE/python-app-deploy/"
+                '''
+            }
+        }
+
+        stage('Run Application') {
+            steps {
+                echo 'Starting the deployed Flask application...'
+                sh '''
+                    if [ -f "$WORKSPACE/python-app-deploy/app.pid" ]; then
+                        old_pid=$(cat "$WORKSPACE/python-app-deploy/app.pid")
+                        kill "$old_pid" 2>/dev/null || true
+                    fi
+
+                    nohup "$WORKSPACE/.venv/bin/python" \
+                        "$WORKSPACE/python-app-deploy/app.py" \
+                        > "$WORKSPACE/python-app-deploy/app.log" 2>&1 &
+                    echo $! > "$WORKSPACE/python-app-deploy/app.pid"
+
+                    for i in $(seq 1 20); do
+                        if "$WORKSPACE/.venv/bin/python" -c \
+                            "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/', timeout=2)" \
+                            2>/dev/null; then
+                            echo "Application is responding."
+                            exit 0
+                        fi
+                        sleep 1
+                    done
+
+                    cat "$WORKSPACE/python-app-deploy/app.log"
+                    echo "Application did not become ready."
+                    exit 1
+                '''
+            }
+        }
+
+        stage('Test Application') {
+            steps {
+                echo 'Testing the deployed application over HTTP...'
+                sh '''
+                    "$WORKSPACE/.venv/bin/python" -c "
+import urllib.request
+url = 'http://127.0.0.1:5000/'
+with urllib.request.urlopen(url, timeout=5) as response:
+    body = response.read().decode('utf-8')
+    print(body)
+    assert response.status == 200
+    assert body == 'Hello, Jenkins Multi-Stage Pipeline!'
+print('Deployed application test passed.')
+"
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed. Check the stage logs for details.'
+        }
+        always {
+            sh '''
+                if [ -f "$WORKSPACE/python-app-deploy/app.pid" ]; then
+                    pid=$(cat "$WORKSPACE/python-app-deploy/app.pid")
+                    kill "$pid" 2>/dev/null || true
+                    rm -f "$WORKSPACE/python-app-deploy/app.pid"
+                fi
+            '''
+        }
+    }
+}
