@@ -35,13 +35,31 @@ The application dependencies are listed in `requirements.txt`, and `test_app.py`
 5. **Test Application:** Send an HTTP request and validate the response.
 6. **Post Actions:** Report the result and clean up the background application process.
 
-## Local Verification
-The application unit test was run locally and passed:
 
-- Tests run: 1
-- Result: `OK`
+## Verification Results
 
-The Jenkins pipeline result will be documented after the first successful build.
+The Jenkins Declarative Pipeline completed successfully in build #3.
+
+- **Build:** Passed — virtual environment created and Flask dependencies installed.
+- **Test:** Passed — unit tests executed using Python `unittest`.
+- **Deploy:** Passed — application files copied to the mock deployment directory.
+- **Run Application:** Passed — Flask application started successfully.
+- **Test Application:** Passed — HTTP status and response body verified.
+- **Post Actions:** Passed — application process cleaned up.
+
+The deployed application returned:
+
+`Hello, Jenkins Multi-Stage Pipeline!`
+
+Final Jenkins result: `SUCCESS`.
+
+## Evidence
+
+Screenshots are stored in the `evidence/` directory:
+
+- `pipeline-stages.png` — successful pipeline stage overview.
+- `successful-console-output.png` — successful console output and HTTP verification.
+
 
 ## Evidence
 The `evidence` directory will contain screenshots of the Jenkins pipeline configuration, stage results, and successful Console Output.
